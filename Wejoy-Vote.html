@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WEJOY VOTE PLATFORM</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;padding:10px}
+.container{max-width:700px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
+h1,h2{text-align:center}
+input,select,button{width:100%;padding:10px;margin:5px 0;border-radius:5px;border:1px solid #ccc}
+button{background:#007bff;color:#fff;border:none;cursor:pointer}
+button:disabled{background:#aaa}
+.hidden{display:none}
+.event, .candidate{border:1px solid #ddd;padding:10px;margin:10px 0;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between}
+.event img,.candidate img{width:50px;height:50px;border-radius:5px;margin-right:10px;object-fit:cover}
+.active{background:#e8f0ff;border-color:#007bff}
+.result-bar{height:20px;background:#007bff;border-radius:5px;margin:2px 0}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>WEJOY VOTE PLATFORM</h1>
+
+<!-- LOGIN -->
+<div id="loginSection">
+<h2>Admin / Event Owner Login</h2>
+<input id="username" placeholder="Username" />
+<input id="password" placeholder="Password" type="password" />
+<button onclick="login()">Login</button>
+<p id="loginMsg" style="color:red"></p>
+</div>
+
+<!-- MASTER DASHBOARD -->
+<div id="masterDashboard" class="hidden">
+<h2>Master Admin Dashboard</h2>
+<button onclick="showAllEvents()">View All Events</button>
+<div id="commissionDisplay"></div>
+<h3>Add New Event</h3>
+<input id="newEventName" placeholder="Event Name" />
+<input id="newEventPrice" type="number" placeholder="Vote Price (₵)" />
+<input type="file" id="newEventImage" accept="image/*" />
+<select id="selectOwner"></select>
+<button onclick="addEvent()">Add Event</button>
+<div id="eventsContainer"></div>
+</div>
+
+<!-- OWNER DASHBOARD -->
+<div id="ownerDashboard" class="hidden">
+<h2>Event Owner Dashboard</h2>
+<h3>Add New Event</h3>
+<input id="ownerNewEventName" placeholder="Event Name" />
+<input id="ownerNewEventPrice" type="number" placeholder="Vote Price (₵)" />
+<input type="file" id="ownerEventImage" accept="image/*" />
+<button onclick="ownerAddEvent()">Add Event</button>
+<div id="ownerEvents"></div>
+</div>
+
+<!-- VOTING SECTION -->
+<div id="votingSection" class="hidden">
+<h2 id="eventTitle"></h2>
+<div id="candidatesContainer"></div>
+<input id="newCandidateName" placeholder="Add Candidate Name" />
+<input type="file" id="newCandidateImage" accept="image/*" />
+<button onclick="addCandidate()">Add Candidate</button>
+<input id="voteCount" type="number" min="1" placeholder="Enter number of votes" />
+<button id="voteButton" onclick="payAndVote()">Vote</button>
+<p id="voteStatus" style="color:red"></p>
+<div id="resultsContainer"></div>
+</div>
+
+<!-- SUPABASE + PAYSTACK -->
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+
+// ✅ Your Supabase credentials
+const supabaseUrl = 'https://nkbzjtxzwhitroeqojtz.supabase.co'
+const supabaseKey = 'sb_publishable_wGTu23pwE7UvUD1Q2h8g_Q_ceVPOgU-'
+const supabase = createClient(supabaseUrl, supabaseKey)
+
+let currentUser=null
+let currentUserID=null
+let selectedEvent=null
+let selectedCandidate=null
+
+// ---------------- LOGIN ----------------
+async function login(){
+  const username=document.getElementById('username').value.trim()
+  const password=document.getElementById('password').value
+  const msg=document.getElementById('loginMsg')
+  msg.innerText=''
+
+  if(username==='Wejoy Vote' && password==='Smile,wecare'){
+    currentUser='master'
+    document.getElementById('loginSection').classList.add('hidden')
+    document.getElementById('masterDashboard').classList.remove('hidden')
+    loadOwners()
+    loadCommission()
+    return
+  }
+
+  let {data: users}=await supabase.from('Users').select('*').eq('username',username).eq('password',password)
+  if(!users || users.length===0){ msg.innerText='Invalid credentials'; return;}
+  currentUser='owner'
+  currentUserID=users[0].id
+  document.getElementById('loginSection').classList.add('hidden')
+  document.getElementById('ownerDashboard').classList.remove('hidden')
+  loadOwnerEvents()
+}
+
+// ---------------- UPLOAD IMAGE ----------------
+async function uploadImage(file){
+  if(!file) return ''
+  const filePath=`images/${Date.now()}_${file.name}`
+  let {data,error}=await supabase.storage.from('images').upload(filePath,file)
+  if(error){ console.error(error); return ''; }
+  const {publicUrl}=supabase.storage.from('images').getPublicUrl(filePath)
+  return publicUrl
+}
+
+// ---------------- LOAD OWNERS ----------------
+async function loadOwners(){
+  let {data: owners}=await supabase.from('Users').select('*').eq('role','owner')
+  const select=document.getElementById('selectOwner'); select.innerHTML=''
+  owners.forEach(o=>{const option=document.createElement('option'); option.value=o.id; option.innerText=o.username; select.appendChild(option);})
+}
+
+// ---------------- ADD EVENT ----------------
+async function addEvent(){
+  const title=document.getElementById('newEventName').value.trim()
+  const price=parseInt(document.getElementById('newEventPrice').value)
+  const owner=document.getElementById('selectOwner').value
+  const file=document.getElementById('newEventImage').files[0]
+  if(!title||!price||!owner) return alert('Enter all fields')
+  const imageUrl=await uploadImage(file)
+  await supabase.from('Events').insert([{title,price_per_vote:price,status:'open',owner_id:owner,image_url:imageUrl}])
+  document.getElementById('newEventName').value=''; document.getElementById('newEventPrice').value=''; document.getElementById('newEventImage').value=''
+  loadOwners()
+}
+
+// ---------------- OWNER ADD EVENT ----------------
+async function ownerAddEvent(){
+  const title=document.getElementById('ownerNewEventName').value.trim()
+  const price=parseInt(document.getElementById('ownerNewEventPrice').value)
+  const file=document.getElementById('ownerEventImage').files[0]
+  if(!title||!price) return alert('Enter all fields')
+  const imageUrl=await uploadImage(file)
+  await supabase.from('Events').insert([{title,price_per_vote:price,status:'open',owner_id:currentUserID,image_url:imageUrl}])
+  document.getElementById('ownerNewEventName').value=''; document.getElementById('ownerNewEventPrice').value=''; document.getElementById('ownerEventImage').value=''
+  loadOwnerEvents()
+}
+
+// ---------------- TOGGLE EVENT STATUS ----------------
+async function toggleEventStatus(eventID,currentStatus){
+  const newStatus=currentStatus==='open'?'closed':'open'
+  await supabase.from('Events').update({status:newStatus}).eq('id',eventID)
+  loadOwnerEvents()
+}
+
+// ---------------- SELECT EVENT ----------------
+async function selectEvent(id){
+  selectedEvent=id
+  const {data:eventData}=await supabase.from('Events').select('*').eq('id',id).single()
+  document.getElementById('votingSection').classList.remove('hidden')
+  document.getElementById('eventTitle').innerText=eventData.title
+  document.getElementById('voteButton').disabled=(eventData.status==='closed')
+  document.getElementById('voteStatus').innerText=(eventData.status==='closed')?'Voting Closed':''
+  loadCandidates(id)
+}
+
+// ---------------- CANDIDATES ----------------
+async function addCandidate(){
+  const name=document.getElementById('newCandidateName').value.trim()
+  const file=document.getElementById('newCandidateImage').files[0]
+  if(!name||!selectedEvent) return alert('Enter candidate name')
+  const imageUrl=await uploadImage(file)
+  await supabase.from('Candidates').insert([{event_id:selectedEvent,name,image_url:imageUrl,votes:0}])
+  document.getElementById('newCandidateName').value=''; document.getElementById('newCandidateImage').value=''
+  loadCandidates(selectedEvent)
+}
+
+async function loadCandidates(eventID){
+  const {data:candidates}=await supabase.from('Candidates').select('*').eq('event_id',eventID)
+  const wrap=document.getElementById('candidatesContainer'); wrap.innerHTML=''
+  candidates.forEach(c=>{
+    const div=document.createElement('div'); div.className='candidate'
+    div.innerHTML=`<img src="${c.image_url}"/><span>${c.name}</span>`
+    div.onclick=()=>selectCandidate(c.id,div)
+    wrap.appendChild(div)
+  })
+  showResults(eventID)
+}
+
+function selectCandidate(id,el){ selectedCandidate=id; document.querySelectorAll('.candidate').forEach(c=>c.classList.remove('active')); el.classList.add('active'); }
+
+// ---------------- PAYSTACK + VOTE ----------------
+async function payAndVote(){
+  if(!selectedCandidate) return alert('Select a candidate')
+  let votes=parseInt(document.getElementById('voteCount').value); if(!votes||votes<1) votes=1
+  const {data:eventData}=await supabase.from('Events').select('*').eq('id',selectedEvent).single()
+  if(eventData.status==='closed') return alert('Voting Closed')
+  const amount=votes*(eventData.price_per_vote||100)
+
+  const handler=PaystackPop.setup({
+    key:'pk_live_9874993076951c56557d8643d1052089e2ab9e51', // Replace with your live key
+    email:'voter@wejoyvote.com',
+    amount:amount*100,
+    currency:'GHS',
+    callback: async function(response){
+      await supabase.from('Votes').insert([{user_id:currentUserID||null,candidate_id:selectedCandidate,event_id:selectedEvent,votes,amount,reference:response.reference}])
+      const {data:cand}=await supabase.from('Candidates').select('votes').eq('id',selectedCandidate).single()
+      await supabase.from('Candidates').update({votes:(cand.votes||0)+votes}).eq('id',selectedCandidate)
+      alert('Vote successful! Reference: '+response.reference)
+      document.getElementById('voteCount').value=''
+      loadCandidates(selectedEvent)
+    },
+    onClose:function(){alert('Payment closed');}
+  })
+  handler.openIframe()
+}
+
+// ---------------- SHOW RESULTS ----------------
+async function showResults(eventID){
+  const {data:candidates}=await supabase.from('Candidates').select('*').eq('event_id',eventID)
+  const wrap=document.getElementById('resultsContainer'); wrap.innerHTML='<h3>Results</h3>'
+  const totalVotes=candidates.reduce((a,c)=>a+(c.votes||0),0)
+  candidates.forEach(c=>{
+    const percent=totalVotes?Math.round((c.votes||0)/totalVotes*100):0
+    wrap.innerHTML+=`<div style='display:flex;align-items:center;'><img src='${c.image_url}' style='width:50px;height:50px;border-radius:5px;margin-right:10px'><p>${c.name}: ${c.votes||0} (${percent}%)</p></div><div class='result-bar' style='width:${percent}%'></div>`
+  })
+}
+
+// ---------------- LOAD OWNER EVENTS ----------------
+async function loadOwnerEvents(){
+  const {data: events}=await supabase.from('Events').select('*').eq('owner_id',currentUserID)
+  const wrap=document.getElementById('ownerEvents'); wrap.innerHTML=''
+  events.forEach(e=>{
+    const div=document.createElement('div'); div.className='event'
+    div.innerHTML=`<img src="${e.image_url}"/><span>${e.title} | Price: ₵${e.price_per_vote} | Status: ${e.status}</span>`
+    const btn=document.createElement('button'); btn.innerText=e.status==='open'?'Close':'Open'; btn.onclick=()=>toggleEventStatus(e.id,e.status)
+    div.appendChild(btn); div.onclick=()=>selectEvent(e.id); wrap.appendChild(div)
+  })
+}
+
+// ---------------- LOAD COMMISSION ----------------
+async function loadCommission(){
+  const {data: events}=await supabase.from('Events').select('*')
+  let totalCommission=0
+  for(const e of events){
+    const {data:candidates}=await supabase.from('Candidates').select('*').eq('event_id',e.id)
+    const votesSum=candidates.reduce((a,c)=>a+(c.votes||0),0)
+    const revenue=votesSum*(e.price_per_vote||1)
+    const commission=Math.round(revenue*0.10)
+    totalCommission+=commission
+  }
+  document.getElementById('commissionDisplay').innerText=`Total Commission: ₵${totalCommission}`
+}
+</script>
+</div>
+</body>
+</html>
